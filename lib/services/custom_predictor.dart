@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import '../config/model_weights.dart';
 import '../models/fixture_model.dart';
 import '../models/prediction_model.dart';
 import '../models/team_form_stats.dart';
@@ -10,6 +11,7 @@ class CustomPredictor {
     required List<FixtureModel> homeRecentFixtures,
     required List<FixtureModel> awayRecentFixtures,
     required List<FixtureModel> h2hFixtures,
+    required Map<int, double> opponentRatingMap,
   }) {
     final homeTeamId = fixture.homeTeamId;
     final awayTeamId = fixture.awayTeamId;
@@ -22,53 +24,96 @@ class CustomPredictor {
         percentHome: 'N/A',
         percentDraw: 'N/A',
         percentAway: 'N/A',
-        modelName: 'Elo Momentum Model',
+        modelName: 'Opponent-Adjusted Elo Model',
         confidence: 'Low',
       );
     }
 
-    final homeStats = _buildTeamStats(
+    final homeOverallStats = _buildTeamStats(
       teamId: homeTeamId,
       fixtures: homeRecentFixtures,
       excludeFixtureId: fixture.fixtureId,
+      opponentRatingMap: opponentRatingMap,
     );
 
-    final awayStats = _buildTeamStats(
+    final homeVenueStats = _buildTeamStats(
+      teamId: homeTeamId,
+      fixtures: homeRecentFixtures,
+      excludeFixtureId: fixture.fixtureId,
+      venueFilter: _VenueFilter.homeOnly,
+      opponentRatingMap: opponentRatingMap,
+    );
+
+    final awayOverallStats = _buildTeamStats(
       teamId: awayTeamId,
       fixtures: awayRecentFixtures,
       excludeFixtureId: fixture.fixtureId,
+      opponentRatingMap: opponentRatingMap,
+    );
+
+    final awayVenueStats = _buildTeamStats(
+      teamId: awayTeamId,
+      fixtures: awayRecentFixtures,
+      excludeFixtureId: fixture.fixtureId,
+      venueFilter: _VenueFilter.awayOnly,
+      opponentRatingMap: opponentRatingMap,
     );
 
     final homeH2hStats = _buildTeamStats(
       teamId: homeTeamId,
       fixtures: h2hFixtures,
       excludeFixtureId: fixture.fixtureId,
+      opponentRatingMap: opponentRatingMap,
     );
 
     final awayH2hStats = _buildTeamStats(
       teamId: awayTeamId,
       fixtures: h2hFixtures,
       excludeFixtureId: fixture.fixtureId,
+      opponentRatingMap: opponentRatingMap,
     );
 
     final h2hEdge =
-        ((homeH2hStats.pointsPerGame - awayH2hStats.pointsPerGame) * 3.8)
-            .clamp(-7.0, 7.0)
+        ((homeH2hStats.pointsPerGame - awayH2hStats.pointsPerGame) *
+                ModelWeights.h2hPpgMultiplier)
+            .clamp(ModelWeights.h2hEdgeMin, ModelWeights.h2hEdgeMax)
             .toDouble();
 
-    final eloEdge = ((homeStats.eloLikeRating - awayStats.eloLikeRating) / 22.0)
-        .clamp(-8.0, 8.0)
-        .toDouble();
+    final eloEdge =
+        ((homeOverallStats.eloLikeRating - awayOverallStats.eloLikeRating) /
+                ModelWeights.eloEdgeDivisor)
+            .clamp(ModelWeights.eloEdgeMin, ModelWeights.eloEdgeMax)
+            .toDouble();
 
     final momentumEdge =
-        ((homeStats.formMomentum - awayStats.formMomentum) * 2.8)
-            .clamp(-6.0, 6.0)
+        ((homeOverallStats.formMomentum - awayOverallStats.formMomentum) *
+                ModelWeights.momentumEdgeMultiplier)
+            .clamp(ModelWeights.momentumEdgeMin, ModelWeights.momentumEdgeMax)
             .toDouble();
 
+    final dynamicHomeAdvantage = _calculateDynamicHomeAdvantage(
+      homeOverallStats: homeOverallStats,
+      homeVenueStats: homeVenueStats,
+    );
+
+    final homeBaseStrength = _combineOverallAndVenueStrength(
+      overallStats: homeOverallStats,
+      venueStats: homeVenueStats,
+    );
+
+    final awayBaseStrength = _combineOverallAndVenueStrength(
+      overallStats: awayOverallStats,
+      venueStats: awayVenueStats,
+    );
+
     final homeStrength =
-        _teamStrength(homeStats) + 5.5 + h2hEdge + eloEdge + momentumEdge;
-    final awayStrength =
-        _teamStrength(awayStats) - h2hEdge - eloEdge - momentumEdge;
+        homeBaseStrength +
+        dynamicHomeAdvantage +
+        h2hEdge +
+        eloEdge +
+        momentumEdge;
+
+    final awayStrength = awayBaseStrength - h2hEdge - eloEdge - momentumEdge;
 
     final diff = homeStrength - awayStrength;
 
@@ -79,7 +124,6 @@ class CustomPredictor {
     final awayPercent = result[2];
 
     final advice = _buildAdvice(
-      fixture: fixture,
       homePercent: homePercent,
       drawPercent: drawPercent,
       awayPercent: awayPercent,
@@ -96,34 +140,53 @@ class CustomPredictor {
       homePercent: homePercent,
       drawPercent: drawPercent,
       awayPercent: awayPercent,
-      homeStats: homeStats,
-      awayStats: awayStats,
+      homeOverallStats: homeOverallStats,
+      awayOverallStats: awayOverallStats,
+      homeVenueStats: homeVenueStats,
+      awayVenueStats: awayVenueStats,
     );
 
     return PredictionModel(
       winnerName: winnerName,
-      winnerComment: 'Elo momentum model • Confidence: $confidence',
+      winnerComment: 'Opponent-adjusted Elo model • Confidence: $confidence',
       advice: advice,
       percentHome: '$homePercent%',
       percentDraw: '$drawPercent%',
       percentAway: '$awayPercent%',
-      modelName: 'Elo Momentum Model',
+      modelName: 'Opponent-Adjusted Elo Model',
       confidence: confidence,
-      homeFormSummary: _buildFormSummary(fixture.homeName, homeStats),
-      awayFormSummary: _buildFormSummary(fixture.awayName, awayStats),
+      homeFormSummary: _buildFormSummary(fixture.homeName, homeOverallStats),
+      awayFormSummary: _buildFormSummary(fixture.awayName, awayOverallStats),
+      homeVenueFormSummary: _buildVenueSummary(
+        teamName: fixture.homeName,
+        stats: homeVenueStats,
+        venueLabel: 'home form',
+      ),
+      awayVenueFormSummary: _buildVenueSummary(
+        teamName: fixture.awayName,
+        stats: awayVenueStats,
+        venueLabel: 'away form',
+      ),
+      homeAdvantageSummary: _buildHomeAdvantageSummary(
+        teamName: fixture.homeName,
+        homeOverallStats: homeOverallStats,
+        homeVenueStats: homeVenueStats,
+        dynamicHomeAdvantage: dynamicHomeAdvantage,
+      ),
       h2hSummary: _buildH2hSummary(
         fixture: fixture,
         homeH2hStats: homeH2hStats,
         awayH2hStats: awayH2hStats,
       ),
       modelExplanation:
-          'The model combines recent form, weighted points per game, goal difference, attack/defense output, home advantage, head-to-head, Elo-style rating, and form momentum.',
+          'This version upgrades Elo. Each match now adjusts rating against an estimated opponent strength from league standings. If standings are unavailable, the model falls back to a neutral opponent rating of 1500.',
       homeStrength: homeStrength,
       awayStrength: awayStrength,
-      homeElo: homeStats.eloLikeRating,
-      awayElo: awayStats.eloLikeRating,
-      homeMomentum: homeStats.formMomentum,
-      awayMomentum: awayStats.formMomentum,
+      homeElo: homeOverallStats.eloLikeRating,
+      awayElo: awayOverallStats.eloLikeRating,
+      homeMomentum: homeOverallStats.formMomentum,
+      awayMomentum: awayOverallStats.formMomentum,
+      dynamicHomeAdvantage: dynamicHomeAdvantage,
     );
   }
 
@@ -131,16 +194,29 @@ class CustomPredictor {
     required int teamId,
     required List<FixtureModel> fixtures,
     required int excludeFixtureId,
+    required Map<int, double> opponentRatingMap,
+    _VenueFilter venueFilter = _VenueFilter.all,
   }) {
     final validFixtures = fixtures.where((fixture) {
       if (fixture.fixtureId == excludeFixtureId) return false;
       if (!_isFinished(fixture.statusShort)) return false;
-      if (fixture.homeGoals == null || fixture.awayGoals == null) return false;
+      if (fixture.homeGoals == null || fixture.awayGoals == null) {
+        return false;
+      }
 
       final isHome = fixture.homeTeamId == teamId;
       final isAway = fixture.awayTeamId == teamId;
 
-      return isHome || isAway;
+      if (!isHome && !isAway) return false;
+
+      switch (venueFilter) {
+        case _VenueFilter.all:
+          return true;
+        case _VenueFilter.homeOnly:
+          return isHome;
+        case _VenueFilter.awayOnly:
+          return isAway;
+      }
     }).toList();
 
     validFixtures.sort(_compareFixtureDateDesc);
@@ -162,7 +238,7 @@ class CustomPredictor {
 
       if (result == null) continue;
 
-      final weight = pow(0.82, i).toDouble();
+      final weight = pow(ModelWeights.recentFormDecay, i).toDouble();
 
       matches++;
       goalsFor += result.goalsFor;
@@ -184,8 +260,14 @@ class CustomPredictor {
     final weightedPointsPerGame = weightSum == 0
         ? 0.0
         : weightedPoints / weightSum;
+
     final formMomentum = _calculateFormMomentum(validFixtures, teamId);
-    final eloLikeRating = _calculateEloLikeRating(validFixtures, teamId);
+
+    final eloLikeRating = _calculateOpponentAdjustedElo(
+      validFixtures: validFixtures,
+      teamId: teamId,
+      opponentRatingMap: opponentRatingMap,
+    );
 
     return TeamFormStats(
       matches: matches,
@@ -199,6 +281,64 @@ class CustomPredictor {
       formMomentum: formMomentum,
       eloLikeRating: eloLikeRating,
     );
+  }
+
+  static double _combineOverallAndVenueStrength({
+    required TeamFormStats overallStats,
+    required TeamFormStats venueStats,
+  }) {
+    final overallStrength = _teamStrength(overallStats);
+
+    if (venueStats.matches == 0) {
+      return overallStrength;
+    }
+
+    final venueStrength = _teamStrength(venueStats);
+
+    final venueDataRatio =
+        (venueStats.matches / ModelWeights.minVenueMatchesForFullBlend)
+            .clamp(0.0, 1.0)
+            .toDouble();
+
+    final venueBlend = ModelWeights.venueFormBlend * venueDataRatio;
+    final overallBlend = 1.0 - venueBlend;
+
+    return (overallStrength * overallBlend) + (venueStrength * venueBlend);
+  }
+
+  static double _calculateDynamicHomeAdvantage({
+    required TeamFormStats homeOverallStats,
+    required TeamFormStats homeVenueStats,
+  }) {
+    if (homeOverallStats.matches == 0 ||
+        homeVenueStats.matches < ModelWeights.minHomeVenueMatchesForAdvantage) {
+      return 0.0;
+    }
+
+    final dataRatio =
+        (homeVenueStats.matches / ModelWeights.minVenueMatchesForFullBlend)
+            .clamp(0.0, 1.0)
+            .toDouble();
+
+    final ppgEdge =
+        (homeVenueStats.weightedPointsPerGame -
+            homeOverallStats.weightedPointsPerGame) *
+        ModelWeights.homeAdvantagePpgWeight;
+
+    final goalDiffEdge =
+        (homeVenueStats.goalDifferencePerMatch -
+            homeOverallStats.goalDifferencePerMatch) *
+        ModelWeights.homeAdvantageGoalDiffWeight;
+
+    final winRateEdge =
+        (homeVenueStats.winRate - homeOverallStats.winRate) *
+        ModelWeights.homeAdvantageWinRateWeight;
+
+    final rawAdvantage = ppgEdge + goalDiffEdge + winRateEdge;
+
+    return (rawAdvantage * dataRatio)
+        .clamp(ModelWeights.homeAdvantageMin, ModelWeights.homeAdvantageMax)
+        .toDouble();
   }
 
   static int _compareFixtureDateDesc(FixtureModel a, FixtureModel b) {
@@ -231,29 +371,36 @@ class CustomPredictor {
       return null;
     }
 
+    final opponentTeamId = isHome ? fixture.awayTeamId : fixture.homeTeamId;
+
+    if (opponentTeamId == null) {
+      return null;
+    }
+
     final goalsFor = isHome ? fixture.homeGoals! : fixture.awayGoals!;
     final goalsAgainst = isHome ? fixture.awayGoals! : fixture.homeGoals!;
 
     int points;
-    double resultValue;
+    double actualScore;
 
     if (goalsFor > goalsAgainst) {
       points = 3;
-      resultValue = 1.0;
+      actualScore = 1.0;
     } else if (goalsFor == goalsAgainst) {
       points = 1;
-      resultValue = 0.0;
+      actualScore = 0.5;
     } else {
       points = 0;
-      resultValue = -1.0;
+      actualScore = 0.0;
     }
 
     return _TeamMatchResult(
       goalsFor: goalsFor,
       goalsAgainst: goalsAgainst,
       points: points,
-      resultValue: resultValue,
+      actualScore: actualScore,
       isHome: isHome,
+      opponentTeamId: opponentTeamId,
     );
   }
 
@@ -261,12 +408,16 @@ class CustomPredictor {
     List<FixtureModel> validFixtures,
     int teamId,
   ) {
-    if (validFixtures.length < 4) {
+    if (validFixtures.length < 5) {
       return 0;
     }
 
     final recentFixtures = validFixtures.take(3).toList();
-    final olderFixtures = validFixtures.skip(3).toList();
+    final olderFixtures = validFixtures.skip(3).take(5).toList();
+
+    if (olderFixtures.length < 2) {
+      return 0;
+    }
 
     final recentPpg = _calculatePpg(recentFixtures, teamId);
     final olderPpg = _calculatePpg(olderFixtures, teamId);
@@ -294,15 +445,16 @@ class CustomPredictor {
     return totalPoints / totalMatches;
   }
 
-  static double _calculateEloLikeRating(
-    List<FixtureModel> validFixtures,
-    int teamId,
-  ) {
+  static double _calculateOpponentAdjustedElo({
+    required List<FixtureModel> validFixtures,
+    required int teamId,
+    required Map<int, double> opponentRatingMap,
+  }) {
     if (validFixtures.isEmpty) {
-      return 1500.0;
+      return ModelWeights.eloBase;
     }
 
-    double rating = 1500.0;
+    double rating = ModelWeights.eloBase;
 
     for (int i = validFixtures.length - 1; i >= 0; i--) {
       final fixture = validFixtures[i];
@@ -310,44 +462,66 @@ class CustomPredictor {
 
       if (result == null) continue;
 
-      final recencyIndex = i;
-      final recencyWeight = pow(0.88, recencyIndex).toDouble();
+      final opponentRating =
+          opponentRatingMap[result.opponentTeamId] ?? ModelWeights.eloBase;
 
-      final goalDiff = (result.goalsFor - result.goalsAgainst)
-          .clamp(-3, 3)
-          .toDouble();
+      final adjustedTeamRating = result.isHome
+          ? rating + ModelWeights.eloHomeRatingBonus
+          : rating;
 
-      final venueFactor = result.isHome ? 0.95 : 1.05;
+      final expectedScore =
+          1.0 / (1.0 + pow(10, (opponentRating - adjustedTeamRating) / 400.0));
 
-      final resultImpact = result.resultValue * 20.0 * venueFactor;
-      final goalImpact = goalDiff * 4.0;
+      final goalDiff = (result.goalsFor - result.goalsAgainst).abs();
+      final marginMultiplier = _calculateMarginMultiplier(goalDiff);
 
-      rating += (resultImpact + goalImpact) * recencyWeight;
+      final recencyWeight = pow(ModelWeights.eloRecencyDecay, i).toDouble();
+
+      final ratingChange =
+          ModelWeights.eloKFactor *
+          marginMultiplier *
+          (result.actualScore - expectedScore) *
+          recencyWeight;
+
+      rating += ratingChange;
     }
 
-    return rating.clamp(1350.0, 1650.0).toDouble();
+    return rating.clamp(ModelWeights.eloMin, ModelWeights.eloMax).toDouble();
+  }
+
+  static double _calculateMarginMultiplier(int goalDiff) {
+    if (goalDiff <= 1) return 1.0;
+
+    final cappedGoalDiff = goalDiff.clamp(1, 4);
+
+    return 1.0 + (log(cappedGoalDiff) / log(2)) * 0.35;
   }
 
   static double _teamStrength(TeamFormStats stats) {
     if (stats.matches == 0) {
-      return 50.0;
+      return ModelWeights.baseStrength;
     }
 
-    final formComponent = (stats.weightedPointsPerGame - 1.2) * 12.0;
-    final classicFormComponent = (stats.pointsPerGame - 1.2) * 7.0;
-    final goalDifferenceComponent = stats.goalDifferencePerMatch * 7.5;
-    final attackComponent = (stats.avgGoalsFor - 1.2) * 4.2;
-    final defenseComponent = (1.2 - stats.avgGoalsAgainst) * 4.2;
-    final winRateComponent = (stats.winRate - 0.35) * 7.0;
-    final momentumComponent = stats.formMomentum * 3.0;
-    final eloComponent = (stats.eloLikeRating - 1500.0) / 18.0;
+    final formComponent =
+        (stats.weightedPointsPerGame - ModelWeights.weightedPpgBaseline) *
+        ModelWeights.weightedPpgWeight;
 
-    return 50.0 +
+    final goalDifferenceComponent =
+        stats.goalDifferencePerMatch * ModelWeights.goalDifferenceWeight;
+
+    final winRateComponent =
+        (stats.winRate - ModelWeights.winRateBaseline) *
+        ModelWeights.winRateWeight;
+
+    final momentumComponent = stats.formMomentum * ModelWeights.momentumWeight;
+
+    final eloComponent =
+        (stats.eloLikeRating - ModelWeights.eloBase) /
+        ModelWeights.eloStrengthDivisor;
+
+    return ModelWeights.baseStrength +
         formComponent +
-        classicFormComponent +
         goalDifferenceComponent +
-        attackComponent +
-        defenseComponent +
         winRateComponent +
         momentumComponent +
         eloComponent;
@@ -356,11 +530,18 @@ class CustomPredictor {
   static List<int> _convertStrengthToPercent(double diff) {
     final absDiff = diff.abs();
 
-    final draw = (30.0 - min(absDiff * 0.5, 18.0)).clamp(12.0, 30.0).toDouble();
+    final draw =
+        (ModelWeights.drawBase -
+                min(
+                  absDiff * ModelWeights.drawDiffPenalty,
+                  ModelWeights.drawMaxPenalty,
+                ))
+            .clamp(ModelWeights.drawMin, ModelWeights.drawMax)
+            .toDouble();
 
     final remaining = 100.0 - draw;
 
-    final homeShare = 1.0 / (1.0 + exp(-diff / 20.0));
+    final homeShare = 1.0 / (1.0 + exp(-diff / ModelWeights.sigmoidScale));
 
     final home = remaining * homeShare;
 
@@ -376,7 +557,6 @@ class CustomPredictor {
   }
 
   static String _buildAdvice({
-    required FixtureModel fixture,
     required int homePercent,
     required int drawPercent,
     required int awayPercent,
@@ -413,21 +593,29 @@ class CustomPredictor {
     required int homePercent,
     required int drawPercent,
     required int awayPercent,
-    required TeamFormStats homeStats,
-    required TeamFormStats awayStats,
+    required TeamFormStats homeOverallStats,
+    required TeamFormStats awayOverallStats,
+    required TeamFormStats homeVenueStats,
+    required TeamFormStats awayVenueStats,
   }) {
     final maxPercent = max(homePercent, max(drawPercent, awayPercent));
-    final minMatches = min(homeStats.matches, awayStats.matches);
+    final minOverallMatches = min(
+      homeOverallStats.matches,
+      awayOverallStats.matches,
+    );
+    final minVenueMatches = min(homeVenueStats.matches, awayVenueStats.matches);
 
-    if (minMatches < 3) {
+    if (minOverallMatches < ModelWeights.minMatchesForMediumConfidence) {
       return 'Low';
     }
 
-    if (maxPercent >= 60 && minMatches >= 6) {
+    if (maxPercent >= ModelWeights.highConfidencePercent &&
+        minOverallMatches >= ModelWeights.minMatchesForHighConfidence &&
+        minVenueMatches >= ModelWeights.minVenueMatchesForHighConfidence) {
       return 'High';
     }
 
-    if (maxPercent >= 46) {
+    if (maxPercent >= ModelWeights.mediumConfidencePercent) {
       return 'Medium';
     }
 
@@ -443,11 +631,53 @@ class CustomPredictor {
         ? '+${stats.formMomentum.toStringAsFixed(2)}'
         : stats.formMomentum.toStringAsFixed(2);
 
-    return '$teamName: ${stats.recordText} • '
+    return '$teamName overall: ${stats.recordText} • '
         'GF ${stats.goalsFor} • GA ${stats.goalsAgainst} • '
         'W-PPG ${stats.weightedPointsPerGame.toStringAsFixed(2)} • '
-        'Elo ${stats.eloLikeRating.toStringAsFixed(0)} • '
+        'GD/Match ${stats.goalDifferencePerMatch.toStringAsFixed(2)} • '
+        'Opp-Elo ${stats.eloLikeRating.toStringAsFixed(0)} • '
         'Momentum $momentumText';
+  }
+
+  static String _buildVenueSummary({
+    required String teamName,
+    required TeamFormStats stats,
+    required String venueLabel,
+  }) {
+    if (stats.matches == 0) {
+      return '$teamName $venueLabel: no recent finished matches found.';
+    }
+
+    final momentumText = stats.formMomentum >= 0
+        ? '+${stats.formMomentum.toStringAsFixed(2)}'
+        : stats.formMomentum.toStringAsFixed(2);
+
+    return '$teamName $venueLabel: ${stats.recordText} • '
+        'GF ${stats.goalsFor} • GA ${stats.goalsAgainst} • '
+        'W-PPG ${stats.weightedPointsPerGame.toStringAsFixed(2)} • '
+        'GD/Match ${stats.goalDifferencePerMatch.toStringAsFixed(2)} • '
+        'Opp-Elo ${stats.eloLikeRating.toStringAsFixed(0)} • '
+        'Momentum $momentumText';
+  }
+
+  static String _buildHomeAdvantageSummary({
+    required String teamName,
+    required TeamFormStats homeOverallStats,
+    required TeamFormStats homeVenueStats,
+    required double dynamicHomeAdvantage,
+  }) {
+    final advantageText = dynamicHomeAdvantage >= 0
+        ? '+${dynamicHomeAdvantage.toStringAsFixed(2)}'
+        : dynamicHomeAdvantage.toStringAsFixed(2);
+
+    if (homeVenueStats.matches < ModelWeights.minHomeVenueMatchesForAdvantage) {
+      return '$teamName dynamic home advantage: $advantageText • '
+          'not enough home sample, neutralized.';
+    }
+
+    return '$teamName dynamic home advantage: $advantageText • '
+        'home W-PPG ${homeVenueStats.weightedPointsPerGame.toStringAsFixed(2)} '
+        'vs overall W-PPG ${homeOverallStats.weightedPointsPerGame.toStringAsFixed(2)}';
   }
 
   static String _buildH2hSummary({
@@ -467,18 +697,22 @@ class CustomPredictor {
   }
 }
 
+enum _VenueFilter { all, homeOnly, awayOnly }
+
 class _TeamMatchResult {
   final int goalsFor;
   final int goalsAgainst;
   final int points;
-  final double resultValue;
+  final double actualScore;
   final bool isHome;
+  final int opponentTeamId;
 
   const _TeamMatchResult({
     required this.goalsFor,
     required this.goalsAgainst,
     required this.points,
-    required this.resultValue,
+    required this.actualScore,
     required this.isHome,
+    required this.opponentTeamId,
   });
 }

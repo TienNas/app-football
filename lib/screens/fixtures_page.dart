@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../models/fixture_model.dart';
 import '../services/football_api_service.dart';
 import '../widgets/fixture_card.dart';
+import 'backtest_page.dart';
+import 'prediction_history_page.dart';
 import 'prediction_page.dart';
 import 'saved_matches_page.dart';
 
@@ -27,6 +29,7 @@ class _FixturesPageState extends State<FixturesPage> {
   @override
   void initState() {
     super.initState();
+
     fixturesFuture = api.getFixturesByDate(selectedDate);
 
     searchController.addListener(() {
@@ -112,6 +115,26 @@ class _FixturesPageState extends State<FixturesPage> {
       appBar: AppBar(
         title: const Text('Football AI'),
         actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BacktestPage()),
+              );
+            },
+            icon: const Icon(Icons.analytics_outlined, size: 21),
+          ),
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PredictionHistoryPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.insights_outlined, size: 21),
+          ),
           IconButton(
             onPressed: () {
               Navigator.push(

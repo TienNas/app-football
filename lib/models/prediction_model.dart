@@ -10,6 +10,9 @@ class PredictionModel {
   final String? confidence;
   final String? homeFormSummary;
   final String? awayFormSummary;
+  final String? homeVenueFormSummary;
+  final String? awayVenueFormSummary;
+  final String? homeAdvantageSummary;
   final String? h2hSummary;
   final String? modelExplanation;
 
@@ -20,6 +23,7 @@ class PredictionModel {
   final double? awayElo;
   final double? homeMomentum;
   final double? awayMomentum;
+  final double? dynamicHomeAdvantage;
 
   PredictionModel({
     required this.winnerName,
@@ -32,6 +36,9 @@ class PredictionModel {
     this.confidence,
     this.homeFormSummary,
     this.awayFormSummary,
+    this.homeVenueFormSummary,
+    this.awayVenueFormSummary,
+    this.homeAdvantageSummary,
     this.h2hSummary,
     this.modelExplanation,
     this.homeStrength,
@@ -40,6 +47,7 @@ class PredictionModel {
     this.awayElo,
     this.homeMomentum,
     this.awayMomentum,
+    this.dynamicHomeAdvantage,
   });
 
   factory PredictionModel.fromApi(Map<String, dynamic> json) {

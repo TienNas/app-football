@@ -4,6 +4,7 @@ import '../models/fixture_model.dart';
 import '../models/prediction_model.dart';
 import '../services/football_api_service.dart';
 import '../services/local_storage_service.dart';
+import '../services/prediction_history_service.dart';
 import '../widgets/match_header.dart';
 import '../widgets/prediction_box.dart';
 
@@ -19,6 +20,7 @@ class PredictionPage extends StatefulWidget {
 class _PredictionPageState extends State<PredictionPage> {
   final FootballApiService api = FootballApiService();
   final LocalStorageService storage = LocalStorageService();
+  final PredictionHistoryService predictionHistory = PredictionHistoryService();
 
   late Future<PredictionModel> predictionFuture;
   late Future<bool> favoriteFuture;
@@ -27,14 +29,30 @@ class _PredictionPageState extends State<PredictionPage> {
   void initState() {
     super.initState();
 
-    predictionFuture = api.getPrediction(widget.fixture);
+    predictionFuture = _loadPredictionAndSaveRecord();
     favoriteFuture = storage.isFavorite(widget.fixture.fixtureId);
 
     storage.addToHistory(widget.fixture);
   }
 
+  Future<PredictionModel> _loadPredictionAndSaveRecord({
+    bool forceRefresh = false,
+  }) async {
+    final prediction = await api.getPrediction(
+      widget.fixture,
+      forceRefresh: forceRefresh,
+    );
+
+    await predictionHistory.savePrediction(
+      fixture: widget.fixture,
+      prediction: prediction,
+    );
+
+    return prediction;
+  }
+
   Future<void> reload() async {
-    final future = api.getPrediction(widget.fixture, forceRefresh: true);
+    final future = _loadPredictionAndSaveRecord(forceRefresh: true);
 
     setState(() {
       predictionFuture = future;

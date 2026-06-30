@@ -60,6 +60,11 @@ class PredictionBox extends StatelessWidget {
                 value: prediction.awayStrength!.toStringAsFixed(1),
               ),
             ],
+            if (prediction.dynamicHomeAdvantage != null)
+              _InfoLine(
+                label: 'Home advantage',
+                value: _formatSigned(prediction.dynamicHomeAdvantage!),
+              ),
             if (prediction.homeElo != null && prediction.awayElo != null) ...[
               _InfoLine(
                 label: 'Home Elo',
@@ -82,17 +87,36 @@ class PredictionBox extends StatelessWidget {
               ),
             ],
             if (prediction.homeFormSummary != null ||
-                prediction.awayFormSummary != null ||
-                prediction.h2hSummary != null) ...[
+                prediction.awayFormSummary != null) ...[
               const SizedBox(height: 18),
-              _SectionTitle(title: 'Signals'),
+              _SectionTitle(title: 'Overall form'),
               const SizedBox(height: 8),
               if (prediction.homeFormSummary != null)
                 _SignalText(text: prediction.homeFormSummary!),
               if (prediction.awayFormSummary != null)
                 _SignalText(text: prediction.awayFormSummary!),
-              if (prediction.h2hSummary != null)
-                _SignalText(text: prediction.h2hSummary!),
+            ],
+            if (prediction.homeVenueFormSummary != null ||
+                prediction.awayVenueFormSummary != null) ...[
+              const SizedBox(height: 18),
+              _SectionTitle(title: 'Venue form'),
+              const SizedBox(height: 8),
+              if (prediction.homeVenueFormSummary != null)
+                _SignalText(text: prediction.homeVenueFormSummary!),
+              if (prediction.awayVenueFormSummary != null)
+                _SignalText(text: prediction.awayVenueFormSummary!),
+            ],
+            if (prediction.homeAdvantageSummary != null) ...[
+              const SizedBox(height: 18),
+              _SectionTitle(title: 'Home advantage'),
+              const SizedBox(height: 8),
+              _SignalText(text: prediction.homeAdvantageSummary!),
+            ],
+            if (prediction.h2hSummary != null) ...[
+              const SizedBox(height: 18),
+              _SectionTitle(title: 'Head to head'),
+              const SizedBox(height: 8),
+              _SignalText(text: prediction.h2hSummary!),
             ],
             if (prediction.modelExplanation != null) ...[
               const SizedBox(height: 18),
